@@ -1,0 +1,308 @@
+\documentclass{article}
+
+\begin{document}
+<<>>=
+source("./Stat_204/Project/functions.R")
+@
+
+\section*{Gather data}
+<<>>=
+heart = read.csv("C://Users//12063//Documents//R//data//framingham.csv")
+
+# clean NA rows
+inc = subset(heart,complete.cases(heart)==FALSE)
+prop.inc.CHD = count(inc$TenYearCHD)[2,2]/(count(inc$TenYearCHD)[1,2]+count(inc$TenYearCHD)[2,2])
+heart = subset(heart,complete.cases(heart))
+prop.cmpl.CHD = count(heart$TenYearCHD)[2,2]/(count(heart$TenYearCHD)[1,2]+count(heart$TenYearCHD)[2,2])
+heart$TenYearCHD = as.factor(heart$TenYearCHD)
+heart$male = as.factor(heart$male)
+heart$education = as.factor(heart$education)
+heart$BPMeds = as.factor(heart$BPMeds)
+heart$prevalentHyp = as.factor(heart$prevalentHyp)
+colnames(heart)[10] <- "TC"
+# create new data set with categorized cholesterol and blood pressure
+cat.heart = heart
+cat.heart$TC = cut(cat.heart$TC,breaks = c(0,159,199,239,279,Inf),labels=c("_<160","_160-199","_200-239","_240-279","_>280"), ordered_result = FALSE)
+cat.heart$sysBP = cut(cat.heart$sysBP,breaks = c(0,119,129,139,159,Inf), ordered_result = TRUE,labels=c("-optimal","-normal","-high-norm","-hyp1","-hyp2-4"))
+cat.heart$diaBP = cut(cat.heart$diaBP,breaks = c(0, 79, 84, 89, 99,Inf), ordered_result = TRUE,labels=c("-optimal","-normal","-high-norm","-hyp1","-hyp2-4"))
+cat.heart$BP = pmax(as.numeric(cat.heart$diaBP),as.numeric(cat.heart$sysBP))
+cat.heart$BP = factor(cat.heart$BP,ordered = FALSE,labels=c("-optimal","-normal","-high-norm","-hyp1","-hyp2-4"))
+
+# set references for BP and TC (These will be in the intercept)
+cat.heart$BP = relevel(cat.heart$BP,ref="-normal")
+cat.heart$TC = relevel(cat.heart$TC,ref="_160-199")
+
+# only keep BP risk column
+cat.heart.paper = subset(cat.heart,select = -c(sysBP,diaBP,prevalentStroke))
+cat.heart = subset(cat.heart,select = -c(sysBP,diaBP,prevalentStroke,diabetes,currentSmoker))
+heart = subset(heart,select=-c(prevalentStroke,diabetes,diaBP,currentSmoker))
+attach(heart)
+@
+We can justify removing the incomplete cases because both the proportion of patients who developed CHD is .15+-.01 in both the complete and incomplete cases.
+
+\section*{Exploratory data analysis}
+<<eval=FALSE>>=
+names(heart)
+head(heart)
+
+# split data by outcome
+CHD = subset(heart,TenYearCHD==1)
+NCHD = subset(heart,TenYearCHD==0)
+
+# binary predictors
+# gender
+tbl.gender = table(male,TenYearCHD)
+prop.gender = props(tbl.gender); prop.gender
+# BPMeds - are they on BP meds?
+tbl.BPMeds = table(BPMeds,TenYearCHD)
+prop.BPMeds = props(tbl.BPMeds); prop.BPMeds
+# prevalentHpy - are they hypertensive?
+tbl.hyp = table(prevalentHyp,TenYearCHD)
+prop.hyp = props(tbl.hyp); prop.hyp
+
+# continuous predictors
+boxplot(cigsPerDay~TenYearCHD)
+# total cholesterol
+boxplot(TC~TenYearCHD)
+# age
+boxplot(age~TenYearCHD)
+# blood pressure
+boxplot(sysBP~TenYearCHD)
+#boxplot(diaBP~TenYearCHD)
+# bmi
+boxplot(BMI~TenYearCHD)
+# resting heart rate
+boxplot(heartRate~TenYearCHD)
+# fasted blood glucose
+bx.gluc = boxplot(glucose~TenYearCHD)
+
+# is this a reasonable outlier percentage
+prop.out.gluc.CDH = length(boxplot(CHD$glucose)$out)/nrow(CHD) # 8.25%
+prop.out.gluc.NCHD = length(boxplot(NCHD$glucose)$out)/nrow(NCHD) # 4.39%
+
+# correlations
+matrix.heart = data.matrix(heart, rownames.force = NA)
+cor(matrix.heart[,1:13],as.numeric(TenYearCHD))
+
+# tests for multicollinearity
+@
+
+\section*{Split data}
+<<>>=
+set.seed(11)
+sample = sample.split(heart$male, SplitRatio = .8)
+# --- full data set
+train.full = subset(heart, sample == TRUE)
+test.full  = subset(heart, sample == FALSE)
+# --- split by sex
+# --- male
+train.male = subset(train.full, male==1)
+train.male = subset(train.male, select = -male)
+test.male  = subset(test.full, male==1)
+test.male  = subset(test.male, select = -male)
+# --- female
+train.female = subset(train.full, male==0)
+test.female  = subset(test.full, male==0)
+train.female = subset(train.female, select = -male)
+test.female  = subset(test.female, select = -male)
+# --- categorical
+train.cat = subset(cat.heart, sample == TRUE)
+test.cat  = subset(cat.heart, sample == FALSE)
+
+# --- categorical by sex
+# male
+train.cat.male = subset(train.cat, male==1)
+train.cat.male = subset(train.cat.male, select=-male)
+test.cat.male  = subset(test.cat, male==1)
+test.cat.male  = subset(test.cat.male, select=-male)
+# female
+train.cat.female = subset(train.cat, male==0)
+train.cat.female = subset(train.cat.female, select=-male)
+test.cat.female  = subset(test.cat, male==0)
+test.cat.female  = subset(test.cat.female, select=-male)
+@
+Check Split
+<<>>=
+#check for good split
+ggplot(train.full,aes(x=glucose))+geom_density(color="blue")+geom_density(data=test.full,aes(x=glucose),color="red")+theme_bw()
+ggplot(train.full,aes(x=heartRate))+geom_density(color="blue")+geom_density(data=test.full,aes(x=heartRate),color="red")+theme_bw()
+ggplot(train.full,aes(x=TC))+geom_density(color="blue")+geom_density(data=test.full,aes(x=TC),color="red")+theme_bw()
+ggplot(train.full,aes(x=age))+geom_density(color="blue")+geom_density(data=test.full,aes(x=age),color="red")+theme_bw()
+ggplot(train.full,aes(x=cigsPerDay))+geom_density(color="blue")+geom_density(data=test.full,aes(x=cigsPerDay),color="red")+theme_bw()
+#ggplot(train.full,aes(x=sysBP))+geom_density(color="blue")+geom_density(data=test.full,aes(x=sysBP),color="red")+geom_density(data=train.full,aes(x=diaBP),color="blue")+geom_density(data=test.full,aes(x=diaBP),color="red")
+ggplot(train.full,aes(x=BMI))+geom_density(color="blue")+geom_density(data=test.full,aes(x=BMI),color="red")+theme_bw()
+
+
+prop.table(table(train.full$male)); prop.table(table(test.full$male))
+prop.table(table(train.full$BPMeds)); prop.table(table(test.full$BPMeds))
+prop.table(table(train.full$prevalentHyp)); prop.table(table(test.full$prevalentHyp))
+prop.table(table(train.full$TenYearCHD)); prop.table(table(test.full$TenYearCHD))
+mean(train.full$age  ); mean(test.full$age)
+mean(as.numeric(train.full$education)); mean(as.numeric(test.full$education))
+mean(train.full$cigsPerDay); mean(test.full$cigsPerDay)
+mean(train.full$TC); mean(test.full$TC)
+mean(train.full$sysBP); mean(test.full$sysBP)
+mean(train.full$diaBP); mean(test.full$diaBP)
+mean(train.full$BMI); mean(test.full$BMI)
+mean(train.full$heartRate); mean(test.full$heartRate)
+mean(train.full$glucose); mean(test.full$glucose)
+
+# categorized data
+prop.table(table(train.cat$TC)); prop.table(table(test.cat$TC))
+prop.table(table(train.cat$BP)); prop.table(table(test.cat$BP))
+@
+
+\section*{Full model}
+<<>>=
+full.model = glm(train.full$TenYearCHD ~ .,
+                        family = binomial("logit"), data = train.full)
+@
+
+\subsection*{interactions}
+<<>>=
+add1.test(full.model)
+@
+\subsection*{step}
+<<>>=
+full.model.step = step(full.model, scope = .~., direction = "backward", trace=0)
+summary(full.model.step)
+@
+\subsection*{predictive power}
+<<>>=
+metrics = vector(mode = "list", length = 8)
+names(metrics) = c("continuous","categorical", "male continuous", "female continuous", "male categorical", "female categorical", "male paper", "female paper")
+metrics[[1]] = pred.power(full.model.step, test.full)
+@
+
+\section*{categorized model}
+<<>>=
+cat.model = glm(train.cat$TenYearCHD ~ ., family = binomial("logit"), data = train.cat)
+@
+
+\subsection*{Interactions}
+<<>>=
+add1.test(cat.model)
+@
+\subsection*{step}
+<<>>=
+cat.model.step = step(cat.model, scope = .~., direction = "backward", trace=0)
+summary(cat.model.step)
+@
+\subsection*{predictive power}
+<<>>=
+metrics[[2]] = pred.power(cat.model.step, test.cat)
+@
+
+\section*{male/female models}
+<<>>=
+male.model   = glm(train.male$TenYearCHD ~ .,family = binomial("logit"), data = train.male)
+female.model = glm(train.female$TenYearCHD ~ .,family = binomial("logit"), data = train.female)
+@
+
+\subsection*{Interactions}
+<<>>=
+add1.test(male.model)
+add1.test(female.model)
+@
+\subsection*{step}
+<<>>=
+# male
+male.model.step = step(male.model, scope = .~., direction = "backward", trace = 0)
+summary(male.model.step)
+# female
+female.model.step = step(female.model, scope = .~., direction = "backward", trace = 0)
+summary(female.model.step)
+@
+
+\subsection*{predictive power}
+<<>>=
+metrics[[3]] = pred.power(male.model.step, test.male)
+metrics[[4]] = pred.power(female.model.step, test.female)
+@
+\section*{categorized male/female}
+<<>>=
+cat.male.model = glm(train.cat.male$TenYearCHD ~ .,family = binomial("logit"), data = train.cat.male)
+cat.female.model = glm(train.cat.female$TenYearCHD ~.+I(age^2),family=binomial("logit"), data = train.cat.female)
+@
+\subsection*{interactions}
+<<>>=
+add1.test(cat.male.model)
+add1.test(cat.female.model)
+@
+\subsection*{step}
+<<>>=
+cat.male.model.step = step(cat.male.model, scope = .~., direction = "backward", trace = 0)
+summary(cat.male.model.step)
+cat.female.model.step = step(cat.female.model, scope = .~., direction = "backward", trace = 0)
+summary(cat.female.model.step)
+
+@
+
+\subsection*{predictive power}
+<<>>=
+metrics[[5]] = pred.power(cat.male.model.step, test.cat.male)
+metrics[[6]] = pred.power(cat.female.model.step, test.cat.female)
+@
+
+\section*{paper model}
+We do not have access to LDL chol, so we must use TC
+<<>>=
+train.paper = subset(cat.heart.paper, sample == TRUE)
+train.paper.male = subset(train.paper, male==1)
+train.paper.male = subset(train.paper.male, select=-male)
+train.paper.female = subset(train.paper, male==0)
+train.paper.female = subset(train.paper.female, select=-male)
+
+test.paper  = subset(cat.heart.paper, sample == FALSE)
+test.paper.male = subset(test.paper, male==1)
+test.paper.male = subset(test.paper.male, select=-male)
+test.paper.female = subset(test.paper, male==0)
+test.paper.female = subset(test.paper.female, select=-male)
+
+paper.male.model = glm(train.paper.male$TenYearCHD ~ age+TC+BP+diabetes+currentSmoker,family = binomial("logit"), data = train.paper.male)
+paper.female.model = glm(train.paper.female$TenYearCHD ~ age+I(age^2)+TC+BP+diabetes+currentSmoker,family=binomial("logit"),data=train.paper.female)
+
+metrics[[7]] = pred.power(paper.male.model, test.paper.male)
+metrics[[8]] = pred.power(paper.female.model, test.paper.female,printTable = TRUE)
+@
+
+Table of models
+<<>>=
+nmodels = 8
+sigdigits = 3 
+x = names(metrics)
+aics = vector(mode = "numeric", length=nmodels)
+accuracy = vector(mode = "numeric", length=nmodels)
+area = vector(mode = "numeric", length=nmodels)
+tpr = vector(mode = "numeric", length=nmodels)
+tnr = vector(mode = "numeric", length=nmodels)
+fpr = vector(mode = "numeric", length=nmodels)
+fnr = vector(mode = "numeric", length=nmodels)
+for (i in 1:nmodels){ 
+  aics[i] = round(metrics[[i]]$aic, sigdigits)
+  accuracy[i] = round(metrics[[i]]$accuracy, sigdigits)
+  area[i] = round(metrics[[i]]$roc, sigdigits)
+  tpr[i] = round(metrics[[i]]$tpr, sigdigits)
+  tnr[i] = round(metrics[[i]]$tnr, sigdigits)
+  fpr[i] = round(metrics[[i]]$fpr, sigdigits)
+  fnr[i] = round(metrics[[i]]$fnr, sigdigits)
+}
+show = c(1,2,3,4,5,6,7,8) # all
+table = as.data.frame(cbind(x[show],aics[show],accuracy[show],area[show],tpr[show],tnr[show],fpr[show],fnr[show]))
+table %>% kable(caption = "Model Comparison p>.5", col.names = c("Model", "AIC", "Accuracy", "ROC","TPR","TNR","FPR","FNR")) %>% kable_styling(bootstrap_options = c("striped", "hover"))
+
+#generate table for report
+stargazer(cat.male.model.step,paper.male.model,cat.female.model.step,paper.female.model,single.row = TRUE)
+
+# ROC analysis
+options(digits=3)
+full.roc = roc_analysis(full.model.step,test.full,optTH = TRUE)
+cat.roc = roc_analysis(cat.model.step,test.cat,optTH = TRUE)
+cat.male.roc = roc_analysis(cat.male.model.step, test.cat.male, optTH = TRUE)
+cat.female.roc = roc_analysis(cat.female.model.step, test.cat.female, optTH = TRUE)
+
+ggdat = data.frame("th"=full.roc$thresholds,"sens"=full.roc$sensitivities,"spec"=full.roc$specificities)
+cols=c("violet","deepskyblue3","coral1","aquamarine3")
+ggplot()+geom_line(data=ggdat,aes(x=th,y=sens),col=cols[1])+geom_line(data=ggdat,aes(x=th,y=spec),col=cols[2])+theme_bw()+xlab("Threshold")+ylab("")+ggtitle("Full Data Set")+theme(axis.title.x = element_text(size = rel(2)),axis.text = element_text(size = rel(2)),aspect.ratio = 1)
+@
+\end{document}

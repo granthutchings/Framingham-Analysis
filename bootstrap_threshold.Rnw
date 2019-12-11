@@ -1,0 +1,108 @@
+\documentclass{article}
+
+\begin{document}
+
+<<warning=FALSE>>=
+source("./Stat_204/Project/functions.R")
+
+heart = read.csv("C://Users//12063//Documents//R//data//framingham.csv")
+heart = subset(heart,complete.cases(heart))
+heart$TenYearCHD = as.factor(heart$TenYearCHD)
+heart$male = as.factor(heart$male)
+heart$education = as.factor(heart$education)
+heart$BPMeds = as.factor(heart$BPMeds)
+heart$prevalentHyp = as.factor(heart$prevalentHyp)
+heart = subset(heart,select=-c(prevalentStroke,diabetes,currentSmoker))
+attach(heart)
+
+# Generate 10 data with equal CHD 
+true.cases = subset(heart, subset = TenYearCHD==1)
+ntrue = nrow(true.cases)
+false.cases = subset(heart, subset = TenYearCHD==0)
+nfalse = nrow(false.cases)
+BSseeds = c(1,2,3,4,5,6,7,8,9,10)
+BSdata = list()
+BStrain = list()
+BStest = list()
+BSmodels = list()
+metrics = list()
+roc = list()
+nmodels = length(BSseeds)
+for (i in 1:nmodels) {
+  # set seed
+  set.seed(BSseeds[i])
+  # sample from ntrue rows from false.cases
+  samp.false.cases = false.cases[sample(nfalse,ntrue),]
+  # bind true and false cases
+  BSdata[[i]] = rbind(true.cases,samp.false.cases)
+  # split data into testing and training
+  sample = sample.split(BSdata[[i]]$male, SplitRatio = .8)
+  BStrain[[i]] = subset(BSdata[[i]], sample == TRUE)
+  BStest[[i]] = subset(BSdata[[i]], sample == FALSE)
+  # train model using backwards selection
+  full.model = glm(TenYearCHD ~ .,family = binomial("logit"), data = BStrain[[i]])
+  summary(full.model)
+  BSmodels[[i]] = step(full.model, scope = .~., direction = "backward", trace=0)
+  summary(BSmodels[[i]])
+  #metrics[[i]] = pred.power(BSmodels[[i]],BStest[[i]], printTable = TRUE, th = .5)
+  roc[[i]] = roc_analysis(BSmodels[[i]],BStest[[i]],optTH = TRUE)
+}
+# get sum of spec and sens
+spec_avg = sens_avg = th_avg = 0.0
+sens = roc[[1]]$sensitivities
+spec = roc[[1]]$specificities
+for (i in 1:nmodels){
+  th_avg = th_avg + (roc[[i]]$thresholds/nmodels)
+  spec_avg = spec_avg + (roc[[i]]$specificities/nmodels)
+  if (i>1) {
+    sens = rbind(sens,roc[[i]]$sensitivities)
+    spec = rbind(spec,roc[[i]]$specificities)
+  }
+  sens_avg = sens_avg + (roc[[i]]$sensitivities/nmodels)
+}
+# std deviation at each threshold point over 10 models
+sens_std = apply(X = sens, MARGIN = 2, FUN = std)
+spec_std = apply(X = spec, MARGIN = 2, FUN = std)
+
+# average ROC
+avgROC = 0
+ROCs = vector("numeric")
+for (i in 1:nmodels){
+  ROCs[i] = roc[[i]]$auc
+  avgROC = avgROC + roc[[i]]$auc/nmodels
+}
+stdROC = std(ROCs)
+cat("average bootstrap AUC:",avgROC,"std:",stdROC)
+
+cols=c("violet","deepskyblue3","coral1","aquamarine3")
+par(pty="s")
+plot(th_avg,sens_avg,col=cols[1],xlab = "Prediction Threshold",cex.axis=2,cex.lab=2,ylab = "",type = "l",ylim = c(0,1),main = "Bootstrap",lwd=2)
+lines(th_avg,spec_avg,col=cols[2],lwd=2)
+legend("bottom",inset=.05,legend=c("Sensitivity","Specificity"),
+        col=cols[1:3],lty="solid",lwd=2,y.intersp=0.75,bty="n",cex=1.5)
+
+ggdat = data.frame(th_avg,sens_avg,sens_std,spec_avg,spec_std)
+ggplot()+
+  geom_line(data=ggdat,aes(th_avg,sens_avg),col=cols[1])+
+  geom_line(data=ggdat,aes(th_avg,spec_avg),col=cols[2])+
+  geom_ribbon(aes(x=th_avg,ymin=sens_avg-sens_std,ymax=sens_avg+sens_std),alpha=0.3,fill=cols[1],colour=NA)+
+  geom_ribbon(aes(x=th_avg,ymin=spec_avg-spec_std,ymax=spec_avg+spec_std),alpha=0.3,fill=cols[2],colour=NA)+
+  theme_bw()+
+  xlab("Threshold")+
+  ylab("")+
+  ggtitle("Bootstrap")+
+  theme(axis.title.x = element_text(size = rel(2)),
+        axis.text = element_text(size = rel(2)),aspect.ratio = 1)
+  
+
+# optimal threshold based on sum spec and sens
+max_idx = which.max(spec_avg+sens_avg)
+cat("optimal threshold (maximization of sensitivty and specificity):",th_avg[max_idx],"\nsensitivity:",sens_avg[max_idx],"\nspecificity:",spec_avg[max_idx],"\nsum:",sens_avg[max_idx]+spec_avg[max_idx])
+
+# threshold when specifcity required to be 75
+sens75 = which(abs(sens_avg-.75)==min(abs(sens_avg-.75)))
+cat("optimal threshold (sensitivity=.75):",th_avg[sens75],"\nsensitivity:",sens_avg[sens75],"\nspecificity:",spec_avg[sens75],"\nsum:",sens_avg[sens75]+spec_avg[sens75])
+
+@
+
+\end{document}

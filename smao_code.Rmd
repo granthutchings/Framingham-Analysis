@@ -1,0 +1,344 @@
+---
+title: "project"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dpi=120)
+```
+
+```{r load-libraries, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(inspectdf)
+library(reshape2)
+library(RColorBrewer)
+library(caTools)
+library(leaps)
+library(glmnet)
+library(pROC)
+library(xtable)
+library(stargazer)
+library(corrplot)
+```
+
+## Exploratory data analysis
+
+1. Load in the data
+2. See what data looks like
+3. Check shape of data
+
+```{r echo=FALSE, results='hide',message=FALSE}
+heart = read.csv('framingham.csv')
+head(heart)
+dim(heart)
+summary(heart)
+```
+
+Checking number of NA rows
+
+```{r echo=FALSE, results='hide',message=FALSE}
+dim(heart[!complete.cases(heart),])
+
+na.count = table(heart[!complete.cases(heart),]$TenYearCHD)
+
+chd.count = table(heart$TenYearCHD)
+
+# Proportion of NAs compared to original data
+na.count/chd.count
+```
+
+Drop NA rows, check structure
+
+```{r echo=FALSE, results='hide',message=FALSE}
+heart = heart[complete.cases(heart),]
+str(heart)
+```
+
+Copy data into new variable just for EDA
+
+```{r echo=FALSE, results='hide',message=FALSE}
+heart.eda = heart
+heart.eda$TenYearCHD = factor(heart.eda$TenYearCHD, levels=c(0,1), labels=c("No", "Yes"))
+heart.eda$male = factor(heart.eda$male)
+heart.eda$education = factor(heart.eda$education)
+heart.eda$currentSmoker = factor(heart.eda$currentSmoker)
+heart.eda$BPMeds = factor(heart.eda$BPMeds)
+heart.eda$prevalentStroke = factor(heart.eda$prevalentStroke)
+heart.eda$prevalentHyp = factor(heart.eda$prevalentHyp)
+heart.eda$diabetes = factor(heart.eda$diabetes)
+```
+
+Visualizing proportion of chd for each predictor
+
+```{r echo=FALSE, results='hide',message=FALSE, fig.show = 'hide'}
+#path = getwd()
+
+#cairo_pdf("agevschd.pdf")
+ggplot(heart.eda, aes(x=age, fill=TenYearCHD)) + 
+  geom_density(alpha=0.4) + 
+  labs(x="Age", fill="Developed heart disease")
+#dev.off()
+
+
+ggplot(heart.eda, aes(x=currentSmoker, fill=TenYearCHD)) + 
+  geom_bar(alpha=0.4, position="fill") + 
+  labs(x="Smokes", fill="Developed heart disease")
+
+#cairo_pdf("totcholvschd.pdf")
+ggplot(heart.eda, aes(x=totChol, fill=TenYearCHD)) + 
+  geom_density(alpha=0.4) + 
+  labs(x="Total Cholesterol", fill="Developed heart disease")
+#dev.off()
+
+
+ggplot(heart.eda, aes(x=male, fill=TenYearCHD)) + 
+  geom_bar(alpha=0.4, position="fill") + 
+  labs(x="Sex", fill="Developed heart disease")
+
+
+#cairo_pdf("glucosevschd.pdf")
+ggplot(heart.eda, aes(x=glucose, fill=TenYearCHD)) + 
+  geom_density(alpha=0.4) + 
+  labs(x="Glucose", fill="Developed heart disease")
+#dev.off()
+
+ggplot(heart.eda, aes(x=diaBP, fill=TenYearCHD)) + 
+  geom_density(alpha=0.4) + 
+  labs(x="Diastolic blood pressure", fill="Developed heart disease")
+
+
+ggplot(heart.eda, aes(x=heartRate, fill=TenYearCHD)) + 
+  geom_density(alpha=0.4) + 
+  labs(x="Heart Rate", fill="Developed heart disease")
+
+
+ggplot(heart.eda, aes(x=prevalentHyp, fill=TenYearCHD)) + 
+  geom_bar(alpha=0.4, position="fill") + 
+  labs(x="Prevalent Hypertension", fill="Developed heart disease")
+
+
+ggplot(heart.eda, aes(x=diabetes, fill=TenYearCHD)) + 
+  geom_bar(alpha=0.4, position="fill") + 
+  labs(x="Diabetes", fill="Developed heart disease")
+
+#cairo_pdf("sysbpvschd.pdf")
+ggplot(heart.eda, aes(x=sysBP, fill=TenYearCHD)) + 
+  geom_density(alpha=0.4) + 
+  labs(x="Systolic Blood Pressure")
+#dev.off()
+
+
+```
+
+Plotting each predictor against response variable
+
+```{r echo=FALSE, results='hide',message=FALSE , fig.show = 'hide'}
+for (feature in names(heart)){
+  print(ggplot(heart, aes_string(feature, "TenYearCHD")) + geom_point())
+}
+  
+```
+
+
+```{r echo=FALSE, results='hide',message=FALSE}
+create_heatmap = function(df) {
+  
+cor.mat = round(cor(df), 2)
+cor.mat[upper.tri(cor.mat)] = NA
+melted.cor = melt(cor.mat, na.rm = TRUE)
+names(melted.cor) = c("X", "Y", "correlation")
+
+ggplot(melted.cor, aes(X, Y, fill= correlation)) + 
+  geom_tile() +
+  scale_fill_distiller(limit = c(-1,1), palette = "RdBu") +
+  theme_minimal() +
+  geom_text(aes(X, Y, label = correlation), color = "black", size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        legend.justification = c(1, 0),
+        legend.position = c(0.6, 0.7),
+        legend.direction = "horizontal")+
+        guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                        title.position = "top", title.hjust = 0.5))
+}
+```
+
+```{r echo=FALSE, results='hide',message=FALSE, fig.show = 'hide'}
+create_heatmap(heart)
+
+cairo_pdf("correlation.pdf", width=8)
+
+corrplot(cor(heart),
+         method="color",
+         tl.col="black",
+         tl.cex=1.2,
+         tl.srt=55,
+         number.cex=.5,
+         cl.cex=1.2,
+         cl.pos = "b",
+         mar=c(0,0,1,0))
+dev.off()
+```
+
+Start removing variables
+
+```{r}
+heart2 = heart
+
+for(i in 1:length(colnames(heart2))) {
+  colnames(heart2)[i] = tolower(colnames(heart2)[i]) 
+}
+
+colnames(heart2)[1] = "ismale"
+
+heart2 = subset(heart2, select= -c(diabp))
+
+# Only 21 people had stroke
+table(heart2$prevalentstroke)
+
+heart2 = subset(heart2, select= -c(prevalentstroke, currentsmoker, diabetes, prevalenthyp))
+
+create_heatmap(heart2)
+```
+
+
+```{r results='hide',message=FALSE}
+heart2$education = factor(heart2$education)
+
+str(heart2)
+```
+
+```{r results='hide',message=FALSE}
+heart3 = subset(heart2)
+
+set.seed(11)
+split.mask = sample.split(heart3$tenyearchd, SplitRatio = .8)
+train = subset(heart3, split.mask == TRUE)
+test  = subset(heart3, split.mask == FALSE)
+
+```
+
+## Modeling
+
+```{r results='hide',message=FALSE}
+model1 = glm(tenyearchd ~ 1, data=train, family = "binomial")
+
+step.forward = step(model1, 
+                    scope=list(lower= ~ 1, 
+                               upper = ~ ismale + age + education +
+                                 cigsperday + bpmeds +
+                                 totchol + sysbp + bmi + heartrate +
+                                 glucose), direction="forward")
+```
+
+```{r}
+summary(step.forward)
+anova(step.forward, test="Chisq")
+```
+
+```{r}
+model2 = glm(tenyearchd ~ age + sysbp  + ismale + 
+               cigsperday + glucose, 
+             data=train, 
+             family=binomial)
+
+summary(model2)
+
+anova(model2, test="Chisq")
+```
+
+prevalenthyp and bpmeds don't seem to be significant predictors at all according to the analysis of deviance table. Adding them to any reduced model does not make them significant.
+
+```{r results='hide',message=FALSE}
+model3 = glm(tenyearchd ~ ismale + age + education +
+                                 cigsperday + sysbp + bmi + heartrate +
+                                 glucose + bpmeds, data=train, family = "binomial")
+
+step.backward = step(model3, 
+                    scope=list(lower= ~ 1, 
+                               upper = ~ .), direction="backward")
+
+```
+
+```{r}
+summary(step.backward)
+anova(step.backward, test="Chisq")
+```
+
+Calculate potentially useful statistics and print them. Also output a ROC plot.
+```{r}
+calculate_acc = function(model, threshold) {
+    model.probs = predict(model, test, type="response")
+    model.pred = ifelse(model.probs >= threshold, 1, 0)
+    model.actual = test$tenyearchd
+    
+    conf.mat = table(model.pred, model.actual)
+    conf.mat
+    
+    # Proportion of positive predictions that were correct
+    precision = conf.mat[4]/(conf.mat[4] + conf.mat[2]) 
+    precision
+    
+    # Proportion of actual positives identified correctly
+    recall = conf.mat[4]/(conf.mat[4] + conf.mat[3])
+    recall
+    
+    # Proportion predicted correctly
+    accuracy = (conf.mat[4] + conf.mat[1])/(conf.mat[1]+conf.mat[2]+conf.mat[3]+conf.mat[4])
+    paste(accuracy)
+    
+    # Accuracy if just guessed 0 for all cases
+    baseline = (conf.mat[1] + conf.mat[2])/(conf.mat[1]+conf.mat[2]+conf.mat[3]+conf.mat[4])
+    par(pty="s")
+    plot(roc(model.actual,model.probs), grid=TRUE, print.auc=TRUE,
+         cex.lab=2.,
+         cex.axis=2.,
+         cex.sub=2.,
+         print.auc.cex=2.)
+    
+    print(conf.mat)
+    print(accuracy)
+    print(baseline)
+    
+}
+
+calculate_acc(model2, 0.35)
+```
+
+Add some points to the roc plot
+
+```{r}
+par(pty="s")
+calculate_acc(model2, 0.35)
+points(.992, .144, pch=19)
+text(.992, .144, labels="(0.5)", pos=4, cex=2)
+points(.945, .356, pch=19)
+text(.945, .356, labels="(0.35)", pos=4, cex=2)
+```
+
+Make nice tables for the models (outputs latex code)
+
+```{r, results='asis'}
+stargazer(step.forward, step.backward, model2,
+          title="Continuous Models",
+          column.labels = c("Forward Stepwise", "Backward Stepwise", "Significant Subset"),
+          model.numbers = FALSE,
+          header = FALSE,
+          single.row = TRUE)
+```
+
+
+```{r, results='asis'} 
+#xtable(summary(model2), display=rep('g',5))
+xtable(anova(step.forward, test="Chisq"), display=c("d", "d","f", "d", "f", "g"))
+```
