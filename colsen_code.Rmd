@@ -1,0 +1,124 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+```{r}
+set.seed(11)
+heart.clay = read.csv("framingham.csv")
+heart.clay = subset(heart.clay,complete.cases(heart.clay))
+heart.clay$TenYearCHD = as.factor(heart.clay$TenYearCHD)
+heart.clay$education = as.factor(heart.clay$education)
+heart.clay$male = as.factor(heart.clay$male)
+sample.clay = sample.split(heart.clay$male, SplitRatio = .8)
+train.clay = subset(heart.clay, sample.clay== TRUE)
+test.clay = subset(heart.clay, sample.clay == FALSE)
+
+dem.model <- glm(TenYearCHD ~ age+male+cigsPerDay+education, data = train.clay, family = "binomial")
+summary(dem.model)
+add1.test(dem.model)
+dem.step.model <- step(dem.model, scope = . ~., direction = "backward", trace = 0)
+summary(dem.step.model)
+d1(dem.model)
+#drop education
+dem.model = update(dem.model, ~. - education)
+d1(dem.model)
+summary(dem.model)
+
+```
+
+```{r}
+library(stargazer)
+stargazer(dem.model, single.row = TRUE)
+```
+
+
+
+```{r}
+roc_analysis = function(model, testdata, plotROC = FALSE, optTH = FALSE) {
+  predictTest = predict(model, type="response", newdata=testdata)
+  roc = roc(response = testdata$TenYearCHD, predictor = predictTest, quiet = TRUE)
+  prevalence = count(testdata$TenYearCHD)$freq[2]/sum(count(testdata$TenYearCHD)$freq)
+  roc$accuracy = (roc$sensitivities*prevalence) + (roc$specificities*(1-prevalence))
+  if (optTH == TRUE) {
+    idx = which.max(roc$sensitivities + roc$specificities)
+    cat("optimal threshold:",roc$thresholds[idx],"\n")
+    cat("sensitivity:",roc$sensitivities[idx],"\n")
+    cat("specificity:",roc$specificities[idx],"\n")
+    cat("sum:", roc$sensitivities[idx]+roc$specificities[idx],"\n")
+    roc$optTHidx = idx
+   
+    sens75 = tail(which(abs(roc$sensitivities-.75)==min(abs(roc$sensitivities-.75))),n=1)
+    cat("optimal threshold (sensitivity=.75):",roc$thresholds[sens75],"\nsensitivity:",
+        roc$sensitivities[sens75],"\nspecificity:",roc$specificities[sens75],"\nsum:",
+        roc$sensitivities[sens75]+roc$specificities[sens75])
+    roc$sens75TH = roc$thresholds[sens75]
+  }
+  # if (plotROC==TRUE) {
+  #   par(pty="s")
+  #   cols=c("violet","deepskyblue3","coral1","aquamarine3")
+  #   ggdat = data.frame("th"=roc$thresholds,"spec"=roc$specificities,"sens"=roc$sensitivities)
+  #   print(head(ggdat))
+  #   ggplot()+
+  #     geom_line(data=ggdat,aes(x=th,y=sens),col=cols[1])+
+  #     geom_line(data=ggdat,aes(x=th,y=spec),col=cols[2])+
+  #     theme_bw()+
+  #     xlab("Threshold")+
+  #     ylab("")+
+  #     ggtitle("Full Data Set")+
+  #     theme(axis.title.x = element_text(size = rel(1.5)),
+  #           axis.text = element_text(size = rel(1.5)))
+  # }
+  return(roc)
+}
+pred.power = function(model, testdata, printTable = FALSE, th=.5) {
+  predictTest = predict(model, type="response", newdata=testdata)
+  t = table(predictTest > th, testdata$TenYearCHD)
+  if (dim(t)[1] == 1) {t = rbind(t,c(0,0))}
+  if(printTable){print(t);print(sum(t))}
+  TP = t[2,2]
+  TN = t[1,2]
+  FP = t[2,1]
+  FN = t[1,1]
+  accuracy = (TP+FN)/sum(t)
+  tpr = TP/(TP+FN) # sensitivity
+  fnr = FN/(FN+TP)
+  tnr = TN/(TN+FP)
+  fpr = FP/(FP+TN)
+  roc = roc(response = testdata$TenYearCHD, predictor = predictTest, plot=TRUE, quiet = TRUE)
+  par(pty="s")
+  plot(roc, grid=TRUE, print.auc=TRUE, print.auc.cex = 2, cex.axis = 2, cex.lab = 2)
+  metrics = data.frame("aic"=model$aic,"accuracy"=accuracy,"roc"=roc$auc,"tpr"=tpr,"tnr"=tnr,"fpr"=fpr,"fnr"=fnr)
+  return(metrics)
+}
+pred.power(dem.model,test.clay)
+roc = roc_analysis(dem.model,test.clay, plotROC = TRUE,optTH = TRUE)
+par(pty="s")
+plot(roc, grid=TRUE, print.auc=TRUE, print.auc.cex = 2, cex.axis = 2, cex.lab = 2)
+```
+
+
+
+
+
+```{r}
+#Probabilities of failure
+predictTest = predict(mylogit4, type="response", newdata=test)
+```
+
+```{r}
+w <- table(predictTest > 0.5,test$TenYearCHD)
+w
+```
+
+```{r}
+s <- table(predictTest > 0.35,test$TenYearCHD)
+s
+```
+ 
+```{r}
+t <- table(predictTest > 0.1279429,test$TenYearCHD)
+t
+```
+
